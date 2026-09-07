@@ -1,5 +1,5 @@
-# This workflow builds, vets, and tests the Go web server, then uploads
-# the compiled binary as a build artifact.
+# This workflow builds, tests, and (conditionally) deploys the Go web server
+# across three dependent jobs: build -> test -> deploy.
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
 name: Go
 
@@ -13,9 +13,9 @@ permissions:
   contents: read
 
 jobs:
+
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,11 +29,30 @@ jobs:
       - name: Verify modules
         run: go mod verify
 
-      - name: Vet
-        run: go vet ./...
-
       - name: Build
         run: go build -v -o bin/server ./...
+
+      - name: Upload compiled binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-binary
+          path: bin/server
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
 
       - name: Test
         run: go test -v -race -coverprofile=coverage.out ./...
@@ -44,8 +63,24 @@ jobs:
           name: coverage-report
           path: coverage.out
 
-      - name: Upload compiled binary
-        uses: actions/upload-artifact@v4
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Download compiled binary
+        uses: actions/download-artifact@v4
         with:
           name: server-binary
-          path: bin/server
+          path: bin
+
+      - name: Make binary executable
+        run: chmod +x bin/server
+
+      - name: Deploy
+        run: |
+          echo "Deploying server binary to production..."
+          # e.g. scp/rsync to a host, push to a container registry,
+          # trigger a Kubernetes rollout, call a deploy API, etc.
+          ls -la bin/
